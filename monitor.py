@@ -7,12 +7,16 @@
   LINE_USER_ID        你的 LINE user ID（U 開頭）
   KOYAMAEN_EMAIL      空殼帳號的 email（不要用主帳號）
   KOYAMAEN_PASSWORD   空殼帳號的密碼
+  GMAIL_APP_PASSWORD  （選用）空殼帳號專屬 Gmail 的「應用程式密碼」，有設定就會自動讀驗證碼信
 
 通知規則：某個規格「有貨」而且「可以寄台灣」時才通知；同一個規格持續有貨不重複通知。
 讀不到網站（被擋、登入失敗）超過 ALERT_AFTER_HOURS 小時，會用 LINE 警告一次。
 """
+import email as emaillib
+import email.utils
 import gzip
 import html as htmllib
+import imaplib
 import http.cookiejar
 import json
 import os
@@ -126,6 +130,42 @@ def login_error(page, code):
     err = re.search(r'woocommerce-error[^>]*>(.*?)</ul>', page, re.S)
     msg = re.sub(r"<[^>]+>", " ", err.group(1)).strip() if err else f"HTTP {code}"
     return re.sub(r"\s+", " ", msg)[:120]
+
+
+def read_otp_from_gmail(address, app_password, since, wait_seconds=150):
+    """從專屬 Gmail 讀出小山園寄來的 6 位數驗證碼（只看 since 之後收到的信）。讀不到回傳 None。"""
+    deadline = time.time() + wait_seconds
+    while True:
+        try:
+            box = imaplib.IMAP4_SSL("imap.gmail.com")
+            box.login(address, app_password)
+            box.select("INBOX")
+            day = since.astimezone(timezone.utc).strftime("%d-%b-%Y")
+            _, ids = box.search(None, "SINCE", day)
+            for mid in reversed(ids[0].split()[-20:]):
+                _, data = box.fetch(mid, "(RFC822)")
+                msg = emaillib.message_from_bytes(data[0][1])
+                sent = email.utils.parsedate_to_datetime(msg.get("Date"))
+                if sent < since - timedelta(minutes=1):
+                    continue
+                body = ""
+                for part in (msg.walk() if msg.is_multipart() else [msg]):
+                    if part.get_content_type() in ("text/plain", "text/html"):
+                        body += part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "replace")
+                head = (msg.get("From", "") + " " + str(msg.get("Subject", ""))).lower()
+                if "marukyu" not in head and "koyamaen" not in head and "verification" not in (head + body.lower()):
+                    continue
+                m = re.search(r"(?<!\d)(\d{6})(?!\d)", re.sub(r"<[^>]+>", " ", body))
+                if m:
+                    box.logout()
+                    return m.group(1)
+            box.logout()
+        except Exception as e:
+            print(f"  讀取 Gmail 失敗：{type(e).__name__}")
+            return None
+        if time.time() > deadline:
+            return None
+        time.sleep(15)
 
 
 def login(email, password, otp, now):
@@ -258,7 +298,17 @@ def main():
     else:
         status, msg = login(email, password, otp, now)
         print(msg)
-        if status == "need_otp_sent":
+        app_pw = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+        if status.startswith("need_otp") and app_pw and os.path.exists(PENDING_FILE):
+            sent_at = datetime.fromisoformat(load(PENDING_FILE, {})["at"])
+            print("自動到 Gmail 讀驗證碼…")
+            code = read_otp_from_gmail(email, app_pw, sent_at)
+            if code:
+                status, msg = login(email, password, code, now)
+                print(msg)
+            else:
+                print("  Gmail 裡還沒有驗證碼信")
+        if status == "need_otp_sent":   # 沒設 Gmail，或自動讀信失敗 → LINE 請你手動處理
             push_line("🔑【小山園補貨監測】需要驗證碼\n"
                       "小山園剛寄了驗證碼到空殼帳號的信箱，請在幾分鐘內：\n"
                       "GitHub → Run workflow → 在「otp」欄位填入驗證碼 → 按綠色 Run workflow\n"
