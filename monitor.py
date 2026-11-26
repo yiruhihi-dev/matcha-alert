@@ -41,8 +41,25 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-_jar = http.cookiejar.CookieJar()
+SESSION_DIR = "session"                      # 由 workflow 加密後存在 GitHub cache，不會進 repo
+COOKIE_FILE = os.path.join(SESSION_DIR, "cookies.txt")
+PENDING_FILE = os.path.join(SESSION_DIR, "pending.json")
+OTP_RETRY_HOURS = 12                         # 等驗證碼期間，最快多久重寄一次
+OTP_REQUEST_HOURS = range(8, 24)             # 只在台灣時間 08:00–23:59 要求驗證碼，半夜不寄信
+ACTIONS_URL = "https://github.com/yiruhihi-dev/matcha-alert/actions/workflows/check.yml"
+
+_jar = http.cookiejar.LWPCookieJar(COOKIE_FILE)
+if os.path.exists(COOKIE_FILE):
+    try:
+        _jar.load(ignore_discard=True)
+    except Exception:
+        pass
 _opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_jar))
+
+
+def save_session():
+    os.makedirs(SESSION_DIR, exist_ok=True)
+    _jar.save(ignore_discard=True)
 
 
 def http(url, data=None, referer=None):
@@ -91,30 +108,67 @@ def describe_forms(page):
         print("     text:", re.sub(r"\s+", " ", txt).strip()[:300])
 
 
-def login(email, password):
-    code, page = http(LOGIN_URL)
-    if code != 200:
-        return False, f"打不開登入頁 (HTTP {code})"
-    if is_logged_in(page):
-        return True, "已登入"
-    nonce = re.search(r'name="woocommerce-login-nonce"\s+value="([^"]+)"', page)
-    if not nonce:
-        return False, "登入頁格式改變或被擋（找不到 login nonce）"
-    code, page = http(LOGIN_URL, {
-        "username": email,
-        "password": password,
-        "rememberme": "forever",
-        "woocommerce-login-nonce": nonce.group(1),
-        "_wp_http_referer": "/english/shop/account",
-        "login": "Log in",
-    }, referer=LOGIN_URL)
-    if is_logged_in(page):
-        return True, "登入成功"
-    describe_forms(page)
+def login_form_fields(page):
+    """取出登入表單裡所有 hidden 欄位（nonce、onetime_uid、onetime_token…）"""
+    f = re.search(r'<form[^>]*woocommerce-form-login.*?</form>', page, re.S)
+    out = {}
+    for tag in re.findall(r"<input\b[^>]*>", f.group(0) if f else ""):
+        if 'type="hidden"' not in tag:
+            continue
+        n = re.search(r'name="([^"]*)"', tag)
+        v = re.search(r'value="([^"]*)"', tag)
+        if n:
+            out[n.group(1)] = htmllib.unescape(v.group(1)) if v else ""
+    return out
+
+
+def login_error(page, code):
     err = re.search(r'woocommerce-error[^>]*>(.*?)</ul>', page, re.S)
     msg = re.sub(r"<[^>]+>", " ", err.group(1)).strip() if err else f"HTTP {code}"
-    return False, "登入失敗：" + re.sub(r"\s+", " ", msg)[:120]
+    return re.sub(r"\s+", " ", msg)[:120]
 
+
+def login(email, password, otp, now):
+    """回傳 (狀態, 說明)。狀態：ok / need_otp_sent / need_otp_waiting / fail"""
+    code, page = http(LOGIN_URL)
+    if code != 200:
+        return "fail", f"打不開登入頁 (HTTP {code})"
+    if is_logged_in(page):
+        return "ok", "沿用已儲存的登入狀態"
+
+    pending = load(PENDING_FILE, None)
+    base = {"username": email, "password": password, "rememberme": "forever", "login": "Log in"}
+
+    if otp:  # 使用者手動帶驗證碼來執行
+        if not pending:
+            return "fail", "有填驗證碼，但沒有等待中的登入。請先『不填驗證碼』執行一次，收到新驗證碼後再填"
+        data = dict(pending["fields"]); data.update(base); data["onetime_pass"] = otp.strip()
+        code, page = http(LOGIN_URL, data, referer=LOGIN_URL)
+        os.remove(PENDING_FILE)
+        if is_logged_in(page):
+            return "ok", "驗證碼正確，登入成功（之後會沿用登入狀態）"
+        return "fail", "驗證碼登入失敗：" + login_error(page, code)
+
+    if pending:
+        age = now - datetime.fromisoformat(pending["at"])
+        if age < timedelta(hours=OTP_RETRY_HOURS):
+            return "need_otp_waiting", f"等待驗證碼中（{pending['at'][5:16]} 已寄出）"
+    if now.hour not in OTP_REQUEST_HOURS:
+        return "need_otp_waiting", "需要重新登入，但現在是半夜，早上 8 點後再寄驗證碼"
+
+    fields = login_form_fields(page)
+    if "woocommerce-login-nonce" not in fields:
+        return "fail", "登入頁格式改變或被擋（找不到 login nonce）"
+    data = dict(fields); data.update(base)
+    code, page = http(LOGIN_URL, data, referer=LOGIN_URL)
+    if is_logged_in(page):
+        return "ok", "登入成功"
+    if 'name="onetime_pass"' in page:
+        os.makedirs(SESSION_DIR, exist_ok=True)
+        with open(PENDING_FILE, "w", encoding="utf-8") as f:
+            json.dump({"at": now.isoformat(), "fields": login_form_fields(page)}, f)
+        return "need_otp_sent", "小山園已寄出驗證碼"
+    return "fail", "登入失敗：" + login_error(page, code)
 
 def parse(page):
     """回傳 {"status": "ok"/"blocked"/"logged_out", "in": [...], "out": [...], "taiwan": True/False/None}"""
@@ -196,14 +250,25 @@ def main():
     before = json.dumps(state, sort_keys=True)
 
     email, password = os.environ.get("KOYAMAEN_EMAIL"), os.environ.get("KOYAMAEN_PASSWORD")
+    otp = os.environ.get("OTP", "").strip()
     problem = None
     results = {}
     if not email or not password:
         problem = "沒設定 KOYAMAEN_EMAIL / KOYAMAEN_PASSWORD"
     else:
-        ok, msg = login(email, password)
+        status, msg = login(email, password, otp, now)
         print(msg)
-        if not ok:
+        if status == "need_otp_sent":
+            push_line("🔑【小山園補貨監測】需要驗證碼\n"
+                      "小山園剛寄了驗證碼到空殼帳號的信箱，請在幾分鐘內：\n"
+                      "GitHub → Run workflow → 在「otp」欄位填入驗證碼 → 按綠色 Run workflow\n"
+                      f"{ACTIONS_URL}")
+        if status.startswith("need_otp"):
+            save_session()
+            if json.dumps(state, sort_keys=True) != before:
+                save(state)
+            return
+        if status == "fail":
             problem = msg
 
     if not problem:
@@ -235,10 +300,12 @@ def main():
                          f"開始時間：{since.strftime('%m-%d %H:%M')}\n"
                          "這段期間的補貨可能不會通知，請自己留意官網。"):
                 health["warned"] = True
+        save_session()
         if json.dumps(state, sort_keys=True) != before:
             save(state)
         return
 
+    save_session()
     recovered_after_warning = bool(health.get("warned"))
     if health.get("fail_since"):
         if recovered_after_warning:
