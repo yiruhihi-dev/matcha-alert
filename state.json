@@ -1,8 +1,21 @@
 {
  "_v": 2,
- "items": {},
- "health": {
-  "fail_since": "2026-11-26T13:26:51.082251+08:00",
-  "reason": "登入失敗：You can have the verification code sent to your verified email address."
- }
+ "items": {
+  "11a1040c1": {
+   "in": [],
+   "taiwan": true,
+   "alerted": []
+  },
+  "1191040c1": {
+   "in": [],
+   "taiwan": true,
+   "alerted": []
+  },
+  "1171020c1": {
+   "in": [],
+   "taiwan": true,
+   "alerted": []
+  }
+ },
+ "health": {}
 }
