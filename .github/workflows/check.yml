@@ -2,9 +2,14 @@ name: matcha-check
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 每 10 分鐘（GitHub 尖峰時可能延遲幾分鐘）
+    - cron: "*/10 * * * *"   # GitHub 實際約 40–60 分鐘跑一次
   workflow_dispatch:
     inputs:
+      otp:
+        description: "驗證碼（收到小山園驗證碼信時才填，其他時候留空）"
+        type: string
+        required: false
+        default: ""
       test_line:
         description: "只發一則 LINE 測試訊息"
         type: boolean
@@ -28,14 +33,48 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 登入狀態（cookie）加密後存在 GitHub cache，不會出現在公開的 repo 裡
+      - name: Restore login session
+        uses: actions/cache/restore@v4
+        with:
+          path: session.enc
+          key: session-${{ github.run_id }}
+          restore-keys: session-
+
+      - name: Decrypt login session
+        env:
+          KEY: ${{ secrets.KOYAMAEN_PASSWORD }}
+        run: |
+          if [ -f session.enc ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:KEY -in session.enc | tar xz || echo "舊的登入狀態無法解密，重新登入"
+          fi
+
       - name: Check stock
         env:
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           KOYAMAEN_EMAIL: ${{ secrets.KOYAMAEN_EMAIL }}
           KOYAMAEN_PASSWORD: ${{ secrets.KOYAMAEN_PASSWORD }}
+          OTP: ${{ inputs.otp }}
           TEST_LINE: ${{ inputs.test_line && '1' || '0' }}
         run: python monitor.py
+
+      - name: Encrypt login session
+        if: always()
+        env:
+          KEY: ${{ secrets.KOYAMAEN_PASSWORD }}
+        run: |
+          rm -f session.enc
+          if [ -d session ]; then
+            tar cz session | openssl enc -aes-256-cbc -pbkdf2 -pass env:KEY -out session.enc
+          fi
+
+      - name: Save login session
+        if: always() && hashFiles('session.enc') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: session.enc
+          key: session-${{ github.run_id }}
 
       - name: Save state
         run: |
