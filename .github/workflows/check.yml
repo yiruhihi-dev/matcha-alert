@@ -55,6 +55,7 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           KOYAMAEN_EMAIL: ${{ secrets.KOYAMAEN_EMAIL }}
           KOYAMAEN_PASSWORD: ${{ secrets.KOYAMAEN_PASSWORD }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           OTP: ${{ inputs.otp }}
           TEST_LINE: ${{ inputs.test_line && '1' || '0' }}
         run: python monitor.py
