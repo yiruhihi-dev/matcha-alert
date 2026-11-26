@@ -76,6 +76,21 @@ def is_logged_in(page):
     return "variations_form" in page and "to shop.</strong>" not in page and "register and login" not in page.lower()
 
 
+def describe_forms(page):
+    """登入沒成功時，把頁面上的表單結構印出來（不含任何輸入值），用來研究驗證碼流程。"""
+    for f in re.findall(r"<form\b.*?</form>", page, re.S)[:5]:
+        head = re.search(r"<form\b[^>]*>", f).group(0)
+        if "search" in head.lower():
+            continue
+        print("  [form]", re.sub(r'value="[^"]*"', 'value=…', head)[:200])
+        for tag in re.findall(r"<(?:input|button|select|textarea)\b[^>]*>", f):
+            name = re.search(r'name="([^"]*)"', tag)
+            typ = re.search(r'type="([^"]*)"', tag)
+            print("     ", (name.group(1) if name else "-"), (typ.group(1) if typ else ""))
+        txt = re.sub(r"<[^>]+>", " ", f)
+        print("     text:", re.sub(r"\s+", " ", txt).strip()[:300])
+
+
 def login(email, password):
     code, page = http(LOGIN_URL)
     if code != 200:
@@ -95,6 +110,7 @@ def login(email, password):
     }, referer=LOGIN_URL)
     if is_logged_in(page):
         return True, "登入成功"
+    describe_forms(page)
     err = re.search(r'woocommerce-error[^>]*>(.*?)</ul>', page, re.S)
     msg = re.sub(r"<[^>]+>", " ", err.group(1)).strip() if err else f"HTTP {code}"
     return False, "登入失敗：" + re.sub(r"\s+", " ", msg)[:120]
