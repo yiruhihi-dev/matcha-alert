@@ -1,21 +1,8 @@
 {
- "11a1040c1": [
-  "40g can",
-  "100g can",
-  "100g bag",
-  "200g can"
- ],
- "1191040c1": [
-  "40g can",
-  "100g can",
-  "100g bag",
-  "200g can"
- ],
- "1171020c1": [
-  "20g can",
-  "40g can",
-  "100g can",
-  "100g bag",
-  "200g can"
- ]
+ "_v": 2,
+ "items": {},
+ "health": {
+  "fail_since": "2026-11-26T13:26:51.082251+08:00",
+  "reason": "登入失敗：You can have the verification code sent to your verified email address."
+ }
 }
