@@ -2,18 +2,24 @@
  "_v": 2,
  "items": {
   "11a1040c1": {
-   "in": [],
-   "taiwan": true,
+   "in": [
+    "40g can"
+   ],
+   "taiwan": false,
    "alerted": []
   },
   "1191040c1": {
-   "in": [],
-   "taiwan": true,
+   "in": [
+    "40g can"
+   ],
+   "taiwan": false,
    "alerted": []
   },
   "1171020c1": {
-   "in": [],
-   "taiwan": true,
+   "in": [
+    "100g bag"
+   ],
+   "taiwan": false,
    "alerted": []
   }
  },
