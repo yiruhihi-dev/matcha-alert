@@ -5,21 +5,23 @@
    "in": [
     "40g can"
    ],
-   "taiwan": false,
-   "alerted": []
+   "taiwan": true,
+   "alerted": [
+    "40g can"
+   ]
   },
   "1191040c1": {
    "in": [
     "40g can"
    ],
-   "taiwan": false,
-   "alerted": []
+   "taiwan": true,
+   "alerted": [
+    "40g can"
+   ]
   },
   "1171020c1": {
-   "in": [
-    "100g bag"
-   ],
-   "taiwan": false,
+   "in": [],
+   "taiwan": true,
    "alerted": []
   }
  },
